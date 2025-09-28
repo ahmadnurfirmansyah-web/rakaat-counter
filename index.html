@@ -1,144 +1,203 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rakaat Counter - Camera Mode</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rakaat Counter — LightSense</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      background: #f0f0f0;
-      padding: 20px;
-    }
-    h1 { margin-bottom: 10px; }
-    video {
-      width: 90%;
-      max-width: 400px;
-      border: 3px solid #333;
-      border-radius: 10px;
-      margin: 10px 0;
-    }
-    .counter {
-      font-size: 2em;
-      margin: 10px 0;
-      background: white;
-      padding: 10px;
-      border-radius: 10px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    }
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#60a5fa;--muted:#94a3b8}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#071027,#0b1220);color:#e6eef8}
+    .wrap{width:min(640px,96vw);padding:28px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 12px;font-size:20px;color:var(--accent)}
+    .display{display:flex;flex-direction:column;gap:12px}
+    .big{background:rgba(255,255,255,0.02);padding:18px;border-radius:10px;text-align:center}
+    .label{font-size:13px;color:var(--muted);margin-bottom:6px}
+    .value{font-size:48px;font-weight:700;line-height:1}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+    button{background:linear-gradient(180deg,var(--accent),#3b82f6);border:0;padding:10px 14px;border-radius:10px;color:#04243a;font-weight:700;cursor:pointer}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);font-weight:600}
+    .status{margin-top:12px;font-size:13px;color:var(--muted)}
+    .footer{margin-top:14px;font-size:13px;color:var(--muted);display:flex;gap:10px;align-items:center}
+    .range{width:200px}
+    .hint{font-size:12px;color:#bcd3ff}
   </style>
 </head>
 <body>
-  <h1>📷 Rakaat Counter (Camera Mode)</h1>
-  <video id="video" autoplay playsinline></video>
-  <div class="counter">Jumlah Sujud: <span id="sujud">0</span></div>
-  <div class="counter">Jumlah Rakaat: <span id="rakaat">0</span></div>
-  
+  <div class="wrap">
+    <h1>Rakaat Counter — Detection Mode: <span id="mode">LightSense</span></h1>
+    <div class="display">
+      <div class="big" id="sujudCard">
+        <div class="label">Jumlah Sujud (saat ini)</div>
+        <div class="value" id="sujudCount">0</div>
+      </div>
+      <div class="big" id="rakaatCard">
+        <div class="label">Jumlah Rakaat</div>
+        <div class="value" id="rakaatCount">0</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="resetBtn" class="secondary">Reset Semua</button>
+      <button id="manualSujud">Manual: Sujud</button>
+      <button id="toggleDetect" class="secondary">Aktifkan Detection</button>
+      <button id="set99" class="secondary">Set ke 99 (max)</button>
+    </div>
+
+    <div class="footer">
+      <div>
+        <div class="label">Sensitivitas (ambang lux untuk terdeteksi sujud)</div>
+        <input id="threshold" class="range" type="range" min="1" max="200" value="20" />
+        <div class="hint">Ambang saat lux &lt;= <span id="thVal">20</span> dianggap sujud</div>
+      </div>
+    </div>
+
+    <div class="status" id="status">Status: menunggu sensor Ambient Light API...</div>
+  </div>
+
   <script>
-    const video = document.getElementById("video");
-    const sujudEl = document.getElementById("sujud");
-    const rakaatEl = document.getElementById("rakaat");
+    // Rakaat Counter — LightSense detection
+    (function(){
+      const sujudEl = document.getElementById('sujudCount');
+      const rakaatEl = document.getElementById('rakaatCount');
+      const statusEl = document.getElementById('status');
+      const toggleBtn = document.getElementById('toggleDetect');
+      const manualBtn = document.getElementById('manualSujud');
+      const resetBtn = document.getElementById('resetBtn');
+      const thresholdEl = document.getElementById('threshold');
+      const thValEl = document.getElementById('thVal');
+      const set99Btn = document.getElementById('set99');
 
-    let lastBrightness = null;
-    let sujudCount = 0;
-    let rakaatCount = 0;
-    const threshold = 40;   // seberapa besar perubahan brightness dianggap "sujud"
-    const sujudDelay = 3000; // jeda minimal antar sujud (ms)
-    let lastSujudTime = 0;
+      const SUJUD_INTERVAL_MS = 7000; // 7 seconds debounce
+      const MAX_RAKAAT = 99;
 
-    // Akses kamera depan
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
-      .then(stream => {
-        video.srcObject = stream;
-      })
-      .catch(err => alert("Tidak bisa akses kamera: " + err));
+      let sujud = Number(localStorage.getItem('sujud') || 0);
+      let rakaat = Number(localStorage.getItem('rakaat') || 0);
+      let lastSujudAt = 0;
+      let detectActive = false;
+      let lastLux = null;
+      let sensor = null;
 
-    function getFrameBrightness() {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-
-      let sum = 0;
-      for (let i = 0; i < frame.length; i += 4) {
-        sum += (frame[i] + frame[i+1] + frame[i+2]) / 3;
-      }
-      return sum / (frame.length / 4);
-    }
-
-    function checkFrame() {
-      if (video.videoWidth === 0) {
-        requestAnimationFrame(checkFrame);
-        return;
+      function render(){
+        sujudEl.textContent = sujud;
+        rakaatEl.textContent = rakaat;
       }
 
-      const brightness = getFrameBrightness();
+      function save(){
+        localStorage.setItem('sujud', sujud);
+        localStorage.setItem('rakaat', rakaat);
+      }
 
-      if (lastBrightness !== null) {
-        const diff = Math.abs(brightness - lastBrightness);
+      function onSujudDetected(){
         const now = Date.now();
+        if(now - lastSujudAt < SUJUD_INTERVAL_MS) return; // ignore too-fast detections
+        if(rakaat >= MAX_RAKAAT) return;
+        lastSujudAt = now;
+        sujud++;
+        // audio & vibration feedback
+        try{ if(navigator.vibrate) navigator.vibrate(60); }catch(e){}
+        const a = new Audio();
+        a.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='; // tiny silent wav placeholder
+        a.play().catch(()=>{});
 
-        if (diff > threshold && (now - lastSujudTime) > sujudDelay) {
-          sujudCount++;
-          lastSujudTime = now;
-          if (sujudCount >= 2) {
-            rakaatCount = Math.min(99, rakaatCount + 1);
-            sujudCount = 0;
+        // if two sujud -> increment rakaat, reset sujud
+        if(sujud >= 2){
+          sujud = 0;
+          rakaat = Math.min(MAX_RAKAAT, rakaat + 1);
+        }
+        save();
+        render();
+      }
+
+      manualBtn.addEventListener('click', ()=>{
+        onSujudDetected();
+      });
+
+      resetBtn.addEventListener('click', ()=>{
+        if(confirm('Reset semua counter?')){
+          sujud = 0; rakaat = 0; lastSujudAt = 0; save(); render();
+        }
+      });
+
+      set99Btn.addEventListener('click', ()=>{
+        rakaat = MAX_RAKAAT; save(); render();
+      });
+
+      thresholdEl.addEventListener('input', ()=>{
+        thValEl.textContent = thresholdEl.value;
+      });
+
+      toggleBtn.addEventListener('click', async ()=>{
+        if(detectActive){
+          stopSensor();
+        } else {
+          startSensor();
+        }
+      });
+
+      function setStatus(t){ statusEl.textContent = 'Status: ' + t; }
+
+      async function startSensor(){
+        // try Ambient Light Sensor API first
+        if('AmbientLightSensor' in window){
+          try{
+            sensor = new AmbientLightSensor();
+            sensor.addEventListener('reading', ()=>{
+              const lux = sensor.illuminance;
+              handleLux(lux);
+            });
+            sensor.addEventListener('error', ev=>{
+              console.warn('Sensor error', ev.error);
+              setStatus('AmbientLightSensor error: ' + (ev.error && ev.error.name));
+            });
+            await sensor.start();
+            detectActive = true; toggleBtn.textContent = 'Nonaktifkan Detection'; setStatus('LightSense aktif — menunggu perubahan lux');
+            return;
+          }catch(err){
+            console.warn('AmbientLightSensor failed', err);
           }
-          sujudEl.textContent = sujudCount;
-          rakaatEl.textContent = rakaatCount;
-          console.log("Sujud:", sujudCount, "Rakaat:", rakaatCount);
+        }
+
+        // fallback to DeviceLightEvent (older)
+        if('ondevicelight' in window){
+          window.addEventListener('devicelight', onDeviceLightEvent);
+          detectActive = true; toggleBtn.textContent = 'Nonaktifkan Detection'; setStatus('LightSense aktif (fallback) — menunggu perubahan lux');
+          return;
+        }
+
+        // no sensor available
+        setStatus('Tidak ada sensor ambient light. Gunakan tombol manual.');
+        alert('Perangkat Anda tidak mendukung Ambient Light Sensor API. Aplikasi akan bekerja dengan mode manual.');
+      }
+
+      function stopSensor(){
+        if(sensor){ try{ sensor.stop(); }catch(e){} sensor = null; }
+        if('ondevicelight' in window) window.removeEventListener('devicelight', onDeviceLightEvent);
+        detectActive = false; toggleBtn.textContent = 'Aktifkan Detection'; setStatus('Detection dimatikan');
+      }
+
+      function onDeviceLightEvent(e){ handleLux(e.value); }
+
+      function handleLux(lux){
+        lastLux = lux;
+        // if lux value falls under threshold -> treat as sujud event
+        const threshold = Number(thresholdEl.value);
+        // Simple edge detection: only when it goes from above threshold to below (to avoid repeated events while still low)
+        const wasAbove = (typeof handleLux.lastLux === 'number') ? (handleLux.lastLux > threshold) : true;
+        handleLux.lastLux = lux;
+        if(wasAbove && lux <= threshold){
+          onSujudDetected();
         }
       }
 
-      lastBrightness = brightness;
-      requestAnimationFrame(checkFrame);
-    }
+      // initial render
+      render();
+      setStatus('Siap. Tekan "Aktifkan Detection" untuk mulai. Jika tidak tersedia, gunakan tombol Manual.');
 
-    checkFrame();
+      // expose for debugging
+      window.__rakaat = {get sujud(){return sujud}, get rakaat(){return rakaat}};
+
+    })();
   </script>
-
-  <!-- Tombol tambahan -->
-<button id="resetBtn">🔄 Reset</button>
-<button id="manualBtn">🙏 Sujud Manual</button>
-
-<script>
-  const sujudEl = document.getElementById("sujud");
-  const rakaatEl = document.getElementById("rakaat");
-  const resetBtn = document.getElementById("resetBtn");
-  const manualBtn = document.getElementById("manualBtn");
-
-  // Fungsi update UI
-  function updateDisplay() {
-    sujudEl.textContent = sujudCount;
-    rakaatEl.textContent = rakaatCount;
-  }
-
-  // Fungsi tambah sujud
-  function addSujud() {
-    sujudCount++;
-    if (sujudCount >= 2) {
-      rakaatCount = Math.min(99, rakaatCount + 1);
-      sujudCount = 0;
-    }
-    updateDisplay();
-  }
-
-  // Reset counter
-  resetBtn.addEventListener("click", () => {
-    sujudCount = 0;
-    rakaatCount = 0;
-    updateDisplay();
-  });
-
-  // Tambah sujud manual
-  manualBtn.addEventListener("click", () => {
-    addSujud();
-  });
-</script>
-  
 </body>
 </html>
