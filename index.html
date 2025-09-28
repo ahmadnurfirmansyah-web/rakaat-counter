@@ -34,6 +34,44 @@
   <video id="video" autoplay playsinline></video>
   <div class="counter">Jumlah Sujud: <span id="sujud">0</span></div>
   <div class="counter">Jumlah Rakaat: <span id="rakaat">0</span></div>
+  <!-- Tombol tambahan -->
+<button id="resetBtn">🔄 Reset</button>
+<button id="manualBtn">🙏 Sujud Manual</button>
+
+<script>
+  const sujudEl = document.getElementById("sujud");
+  const rakaatEl = document.getElementById("rakaat");
+  const resetBtn = document.getElementById("resetBtn");
+  const manualBtn = document.getElementById("manualBtn");
+
+  // Fungsi update UI
+  function updateDisplay() {
+    sujudEl.textContent = sujudCount;
+    rakaatEl.textContent = rakaatCount;
+  }
+
+  // Fungsi tambah sujud
+  function addSujud() {
+    sujudCount++;
+    if (sujudCount >= 2) {
+      rakaatCount = Math.min(99, rakaatCount + 1);
+      sujudCount = 0;
+    }
+    updateDisplay();
+  }
+
+  // Reset counter
+  resetBtn.addEventListener("click", () => {
+    sujudCount = 0;
+    rakaatCount = 0;
+    updateDisplay();
+  });
+
+  // Tambah sujud manual
+  manualBtn.addEventListener("click", () => {
+    addSujud();
+  });
+</script>
 
   <script>
     const video = document.getElementById("video");
